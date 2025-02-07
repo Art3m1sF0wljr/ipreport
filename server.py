@@ -5,8 +5,15 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 import io
+import logging
 
-# Load environment variables from a .env file (optional)
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Load environment variables from a .env file
 load_dotenv()
 
 # FTPS server credentials
@@ -27,9 +34,9 @@ def get_current_ip():
             response = requests.get(service, timeout=5)
             if response.status_code == 200:
                 return response.text.strip()
-        except requests.RequestException:
-            continue
-    print("Failed to fetch public IP from all services.")
+        except requests.RequestException as e:
+            logging.warning(f"Failed to fetch IP from {service}: {e}")
+    logging.error("Failed to fetch public IP from all services.")
     return None
 
 # Function to connect securely to the FTPS server
@@ -39,9 +46,10 @@ def connect_ftps():
         ftps.login(FTP_USER, FTP_PASS)
         ftps.prot_p()  # Secure data connection (Explicit TLS)
         ftps.set_pasv(True)  # Enable passive mode
+        logging.info("Successfully connected to the FTPS server.")
         return ftps
     except ftplib.all_errors as e:
-        print(f"FTPS connection error: {e}")
+        logging.error(f"FTPS connection error: {e}")
         return None
 
 # Function to update ip.txt and log.txt securely
@@ -53,28 +61,38 @@ def update_ftps(ip, last_ip):
     try:
         ftps.cwd(REMOTE_PATH)
 
-        # Overwrite ip.txt with the current IP
-        ftps.storlines('STOR ip.txt', io.StringIO(ip))
+        # Overwrite ip.txt with the current IP (fix: using BytesIO)
+        ftps.storbinary('STOR ip.txt', io.BytesIO(ip.encode('utf-8')))
+        logging.info(f"Updated ip.txt with IP: {ip}")
 
         # Append to log.txt if the IP has changed
         if ip != last_ip:
             log_entry = f"{datetime.now().isoformat()} - {ip}\n"
 
             # Retrieve existing log.txt if present
+            existing_log = ''
             try:
-                existing_log = []
-                ftps.retrlines('RETR log.txt', existing_log.append)
-                existing_log = '\n'.join(existing_log) + '\n'
+                with io.BytesIO() as bio:
+                    ftps.retrbinary('RETR log.txt', bio.write)
+                    existing_log = bio.getvalue().decode('utf-8')
             except ftplib.error_perm:
-                existing_log = ''  # log.txt doesn't exist yet
+                logging.info("log.txt does not exist. Creating a new one.")
 
             # Append new log entry
-            ftps.storlines('STOR log.txt', io.StringIO(existing_log + log_entry))
+            updated_log = existing_log + log_entry
+            ftps.storbinary('STOR log.txt', io.BytesIO(updated_log.encode('utf-8')))
+            logging.info(f"Appended new IP to log.txt: {ip}")
+        else:
+            logging.info("IP has not changed. No update to log.txt.")
 
     except ftplib.all_errors as e:
-        print(f"Error updating files on FTPS: {e}")
+        logging.error(f"Error updating files on FTPS: {e}")
     finally:
-        ftps.quit()
+        try:
+            ftps.quit()  # Graceful disconnect
+            logging.info("FTPS connection closed.")
+        except ftplib.all_errors as e:
+            logging.warning(f"Error closing FTPS connection: {e}")
 
 # Main loop with secure practices
 last_ip = ''
