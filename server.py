@@ -20,7 +20,7 @@ load_dotenv()
 FTP_HOST = os.getenv('FTP_HOST')
 FTP_USER = os.getenv('FTP_USER')
 FTP_PASS = os.getenv('FTP_PASS')
-REMOTE_PATH = '/my/path/for/'
+REMOTE_PATH = '/ip/'
 
 # Function to get the current public IP with fallback
 def get_current_ip():
@@ -61,15 +61,13 @@ def update_ftps(ip, last_ip):
     try:
         ftps.cwd(REMOTE_PATH)
 
-        # Add timestamp to ip.txt content
-        timestamp = datetime.now().isoformat()
-        ip_txt_content = f"{ip} (Last update: {timestamp})\n"
-        ftps.storbinary('STOR ip.txt', io.BytesIO(ip_txt_content.encode('utf-8')))
-        logging.info(f"Updated ip.txt with IP and timestamp: {ip_txt_content.strip()}")
+        # Overwrite ip.txt with the current IP (fix: using BytesIO)
+        ftps.storbinary('STOR ip.txt', io.BytesIO(ip.encode('utf-8')))
+        logging.info(f"Updated ip.txt with IP: {ip}")
 
         # Append to log.txt if the IP has changed
         if ip != last_ip:
-            log_entry = f"{timestamp} - {ip}\n"
+            log_entry = f"{datetime.now().isoformat()} - {ip}\n"
 
             # Retrieve existing log.txt if present
             existing_log = ''
@@ -96,7 +94,6 @@ def update_ftps(ip, last_ip):
         except ftplib.all_errors as e:
             logging.warning(f"Error closing FTPS connection: {e}")
 
-
 # Main loop with secure practices
 last_ip = ''
 while True:
@@ -105,3 +102,4 @@ while True:
         update_ftps(current_ip, last_ip)
         last_ip = current_ip
     time.sleep(30)
+
