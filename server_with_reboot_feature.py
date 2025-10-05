@@ -8,6 +8,8 @@ import io
 import logging
 import socket
 import subprocess
+import sys
+import traceback
 
 # Setup logging
 logging.basicConfig(
@@ -46,18 +48,20 @@ def get_current_ip():
     return None
 
 # Function to connect securely to the FTPS server with timeout
+# Function to connect securely to the FTPS server with timeout
 def connect_ftps():
     try:
         # Set socket timeout before creating connection
         socket.setdefaulttimeout(CONNECTION_TIMEOUT)
-        
-        ftps = ftplib.FTP_TLS(FTP_HOST, timeout=CONNECTION_TIMEOUT)
+
+        # Create FTP_TLS with Latin-1 encoding to handle non-UTF-8 characters
+        ftps = ftplib.FTP_TLS(FTP_HOST, timeout=CONNECTION_TIMEOUT, encoding='latin-1')
         ftps.login(FTP_USER, FTP_PASS)
         ftps.prot_p()  # Secure data connection (Explicit TLS)
         ftps.set_pasv(True)  # Enable passive mode
         logging.info("Successfully connected to the FTPS server.")
         return ftps
-    except (ftplib.all_errors, socket.timeout, socket.error) as e:
+    except Exception as e:
         logging.error(f"FTPS connection error: {e}")
         return None
     finally:
@@ -77,7 +81,7 @@ def update_ftps(ip, last_ip):
         try:
             # Set timeout for FTP operations
             ftps.sock.settimeout(CONNECTION_TIMEOUT)
-            
+
             ftps.cwd(REMOTE_PATH)
 
             # Overwrite ip.txt with the current IP
@@ -102,7 +106,7 @@ def update_ftps(ip, last_ip):
                     with io.BytesIO() as bio:
                         ftps.retrbinary('RETR log.txt', bio.write)
                         existing_log = bio.getvalue().decode('utf-8')
-                except ftplib.error_perm:
+                except Exception:  # Changed: Catch all exceptions
                     logging.info("log.txt does not exist. Creating a new one.")
 
                 # Append new log entry
@@ -115,7 +119,7 @@ def update_ftps(ip, last_ip):
 
             return True
 
-        except (ftplib.all_errors, socket.timeout, socket.error) as e:
+        except Exception as e:  # Changed: Catch all exceptions
             logging.error(f"Error updating files on FTPS (attempt {retry_count + 1}): {e}")
             retry_count += 1
             time.sleep(5 * retry_count)  # Exponential backoff
@@ -138,19 +142,22 @@ def reboot_system():
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to reboot system: {e}")
 
-# Main loop with watchdog timer
+# SIMPLIFIED MAIN LOOP - Let's identify the exact issue
 last_successful_update = time.time()
 last_ip = ''
 consecutive_failures = 0
 
+# Debug: Check what's happening at import/startup
+logging.info("Script starting up...")
+
 while True:
     try:
         current_time = time.time()
-        
+
         # Check if we're stuck
         if current_time - last_successful_update > CHECK_INTERVAL * REBOOT_AFTER_FAILURES:
             logging.warning("No successful updates in a while. Rebooting...")
-            time.sleep(5)  # Small delay before restarting
+            time.sleep(5)
             reboot_system()
             continue
 
@@ -165,10 +172,20 @@ while True:
                 consecutive_failures += 1
         else:
             consecutive_failures += 1
-        
+
         time.sleep(CHECK_INTERVAL)
-        
+
+    except KeyboardInterrupt:
+        logging.info("Received interrupt signal. Shutting down gracefully...")
+        break
+    except SystemExit:
+        raise
     except Exception as e:
-        logging.error(f"Unexpected error in main loop: {e}")
+        # Add detailed debugging information
+        logging.error(f"Exception type: {type(e)}")
+        logging.error(f"Exception args: {e.args}")
+        logging.error(f"Full exception details:")
+        logging.error(traceback.format_exc())
+        
         consecutive_failures += 1
-        time.sleep(30)  # Longer delay after critical error
+        time.sleep(30)
